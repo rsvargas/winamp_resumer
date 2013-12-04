@@ -9,6 +9,18 @@
  * profitable uses. Use for commercial purposes prohibited.
  *
  * CHANGELOG:
+ * v1.1:
+ *   - this version has been modified so that it no longer resumes unless 
+ *     the song it's about to resume is the same one that was playing when 
+ *     it  last saved information.
+ *
+ * v1.1b: 
+ *   - Fixed a buffer bug.
+ *
+ * v1.2:
+ *   - Fixed a bug and added a feature allowing songs to be resumed from 
+ *     the beginning instead of where they left off.
+ *
  * v1.3 (2013/12/04):
  *   - Support for newer windows and winamp versions (corrected the ini file path);
  *
