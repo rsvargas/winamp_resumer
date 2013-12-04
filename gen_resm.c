@@ -8,6 +8,10 @@
  * The source can freely be modified, reused & redistributed for non-
  * profitable uses. Use for commercial purposes prohibited.
  *
+ * CHANGELOG:
+ * v1.3 (2013/12/04):
+ *   - Support for newer windows and winamp versions (corrected the ini file path);
+ *
  */
 
 #include <windows.h>
@@ -15,24 +19,25 @@
 #include <string.h>
 
 #include <stdlib.h>
-#include "frontend.h"
+#include "wa_ipc.h"
 #include "gen.h"
 #include "resource.h"
-#include "winamp.h"
+#include "../gen_tray/WINAMPCMD.H"
+#include <math.h>
 
 
 /* General defines */
-#define		INI_BUFSIZE					256						/* buffer */
-#define		SONG_NAME_BUF				1024					/* Max length of a song name to retrieve */
-#define		INI_SECTNAME				"ResumerPlugin"			/* duh */
-#define		GEN_BUFSIZE					INI_BUFSIZE				/* another buffer size */
-#define		NUM_EQS						10						/* number of EQ settings */
-#define		EQSIZE						(2*NUM_EQS)+NUM_EQS		/* max size of EQ setting string */
-#define		WM_BUTTON_PLAY				WINAMP_BUTTON2			/* PLAY seems more logical */
-#define		MAXINT						1024*1024*1024			/* A big number that probably won't ever be needed */
-#define		PREAMP						10						/* PreAmp id for IPC_[GS]ETEQDATA */
-#define		EQENABLED					11						/* EqEnabled id for IPC_[GS]ETEQDATA */
-#define		TIMER_ID					3733					/* The ID of our timer */
+#define     INI_BUFSIZE                 256						/* buffer */
+#define     LOG_BUFSIZE                 INI_BUFSIZE             /* log file name buffer size */
+#define     SONG_NAME_BUF               1024					/* Max length of a song name to retrieve */
+#define     INI_SECTNAME                "ResumerPlugin"			/* duh */
+#define     GEN_BUFSIZE                 INI_BUFSIZE				/* another buffer size */
+#define     NUM_EQS                     10						/* number of EQ settings */
+#define     EQSIZE                      (2*NUM_EQS)+NUM_EQS		/* max size of EQ setting string */
+#define     WM_BUTTON_PLAY              WINAMP_BUTTON2			/* PLAY seems more logical */
+#define     PREAMP                      10						/* PreAmp id for IPC_[GS]ETEQDATA */
+#define     EQENABLED                   11						/* EqEnabled id for IPC_[GS]ETEQDATA */
+#define     TIMER_ID                    3733					/* The ID of our timer */
 
 /* Defaults */
 #define		DEFAULT_SAVEONEXIT			0
@@ -69,6 +74,7 @@ void config();
 void quit();
 void CALLBACK TimerProc(HWND hwnd, UINT message, UINT_PTR idEvent, DWORD uTime);
 char *get_winamp_ini_path(char *dirbuff,const int size);
+char *get_log_path(char *dirbuff, const int size);
 void WritePrivateProfileInt(const char *sect,const char *varname,const int value,const char *inifile);
 void save_state();
 int num_digits(int number);
@@ -78,7 +84,7 @@ void do_timer();
 /* Setup the module information for WinAmp */
 winampGeneralPurposePlugin module = {
 	GPPHDR_VER,
-	"Resumer Plug-in v1.2",
+	"Resumer Plug-in v1.3",
 	init,
 	config,
 	quit,
@@ -89,10 +95,27 @@ winampGeneralPurposePlugin module = {
 /* This is global because it makes things much cleaner.  It's constant once
 it gets set in init(), then other functions use it. */
 static char ini_path[INI_BUFSIZE];
+static char log_path[LOG_BUFSIZE];
 
 /* Here's what we export so WinAmp knows how to talk to us */
 __declspec ( dllexport ) winampGeneralPurposePlugin * winampGetGeneralPurposePlugin() {
 	return &module;
+}
+
+void mylog( const char* fmt, ... )
+{
+#ifdef _DEBUG
+    FILE* fp = fopen( log_path, "a+" );
+    if( fp )
+    {
+        va_list args;
+        va_start( args, fmt );
+        vfprintf( fp, fmt, args );
+        va_end( args );
+        fputs( "\n", fp );
+    }
+    fclose(fp);
+#endif
 }
 
 /* Initialization routine
@@ -103,6 +126,7 @@ int init()
 	int loc_in_playlist = 0;
 	int loc_in_song = 0;
 	int ii = 0;
+    int result = 0;
 	char eq_string[EQSIZE];
 	int ini_song_name_length = 0;
 	char *song_filename = NULL;
@@ -111,8 +135,9 @@ int init()
 	char *str_to_check = NULL;
 	char song_name[SONG_NAME_BUF];
 
-	/* Initialize our global ini_path */
+	/* Initialize our global ini_path and log_path*/
 	get_winamp_ini_path(ini_path, INI_BUFSIZE);
+    get_log_path(log_path, LOG_BUFSIZE );
 
 	/* If we're supposed to, resume playing with saved settings. */
 
@@ -167,20 +192,26 @@ int init()
 		else
 			str_to_check = NULL;
 		
-		if ( (ini_song_name_length == 0) || /* Nothing returned, the user didn't have this feature before. */
-			 ((str_to_check != NULL) &&
-			 (strcmp(str_to_check, song_name) == 0)) ) /* They match */
-		{
+        if ( (ini_song_name_length == 0) || /* Nothing returned, the user didn't have this feature before. */
+            ((str_to_check != NULL) &&
+            (strcmp(str_to_check, song_name) == 0)) ) /* They match */
+        {
+            /* Jump to loc_in_playlist */
+            result = SendMessage(module.hwndParent, WM_WA_IPC, loc_in_playlist, IPC_SETPLAYLISTPOS);
+            mylog( "SetPLaylistPos=%d, res=%d", loc_in_playlist, result );
 
-			/* Jump to loc_in_playlist */
-			SendMessage(module.hwndParent, WM_WA_IPC, loc_in_playlist, IPC_SETPLAYLISTPOS);
-		
-			/* Start playing selected track */
-			SendMessage(module.hwndParent, WM_COMMAND, WM_BUTTON_PLAY, 0);
+            /* Start playing selected track */
+            
+            //result = SendMessage(module.hwndParent, WM_WA_IPC, 0, IPC_STARTPLAY);
+            result = SendMessage(module.hwndParent,WM_COMMAND,MAKEWPARAM(WM_BUTTON_PLAY,0),0);
+            mylog( "StartPlay, res=%u ", result);
 
-			/* Jump to saved location within track */
-			SendMessage(module.hwndParent, WM_WA_IPC, loc_in_song, IPC_JUMPTOTIME);
-		}
+            /* Jump to saved location within track */
+            result = SendMessage(module.hwndParent, WM_WA_IPC, loc_in_song, IPC_JUMPTOTIME);
+            mylog( "JumpToTime=%dms, res=%u ",  loc_in_song, result);
+
+
+        }
 
 		if (song_filename != NULL) 
 			free(song_filename);
@@ -359,16 +390,36 @@ void save_state()
 
 /* General-purpose routines */
 
-/* Get the path of the winamp.ini file, function used from Pacemaker by
-Olli Parviainen */
+/* Get the path of the winamp.ini file */
 char *get_winamp_ini_path(char *dirbuff,const int size)
 {
-	char path[256],drive[4],dir[256],fname[256],ext[8];
-	GetModuleFileName(0,path,256);
-	_splitpath(path,drive,dir,fname,ext);
-	_makepath(dirbuff,drive,dir,"winamp","ini");
+    if(SendMessage(module.hwndParent,WM_WA_IPC,0,IPC_GETVERSION) >= 0x2900)
+    {
+        // this gets the string of the full ini file path
+        lstrcpyn(dirbuff,(char*)SendMessage(module.hwndParent,WM_WA_IPC,0,IPC_GETINIFILE),size);
+    }
+    else
+    {
+        char* p = dirbuff;
+        p += GetModuleFileName(0,dirbuff,size) - 1;
+        while(p && *p != '.'){p--;}
+        lstrcpyn(p+1,"ini",size);
+    }
+    return dirbuff;
+}
 
-	return dirbuff;
+/* get the log file name (for debug purposes) */
+char *get_log_path(char *dirbuff, const int size)
+{
+    int count;
+    const char* filename = "\\resumer.log";
+
+    count = GetEnvironmentVariable( "USERPROFILE", dirbuff, size );
+    if( count < size )
+        strncat( dirbuff, filename, size );
+    else
+        strncpy( dirbuff, filename, size );
+    return dirbuff;
 }
 
 /* Write an integer out to the INI, function used from Pacemaker by
@@ -383,17 +434,7 @@ void WritePrivateProfileInt(const char *sect,const char *varname,const int value
 /* Find out how many digits are in the specified number */
 int num_digits(int number) 
 {
-	int ii = 1;
-	int jj = 10;
-
-	while (jj <= number) {
-		jj*=10;
-		ii++;
-		if ( jj > MAXINT/10 )
-			return -1;
-	}
-
-	return ii;
+    return (int)log10( (double)number);
 }
 
 /* get the (which_num)th item from a string of delim delimited numbers:
